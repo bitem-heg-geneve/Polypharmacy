@@ -5,10 +5,11 @@
 # fastapi dev sources\app.py
 
 import requests
-from typing import Any
+from typing import List, Dict
 from fastapi import FastAPI, Query, Request
 from pydantic import BaseModel
 from enum import Enum
+from collections import defaultdict
 
 
 app = FastAPI(
@@ -35,7 +36,7 @@ class Interaction(BaseModel):
 
 class Drug(BaseModel):
     gtin: str
-    name: str
+    #name: str
     description: str | None = None
     interactions: list[Interaction]
 
@@ -43,39 +44,16 @@ class Drug(BaseModel):
 STORE: dict[Drug] = {}
 
 
-# class Item(BaseModel):
-#     name: str
-#     description: str | None = None
-#     price: float
-
-# @app.post("/item", description="Store item", status_code=201)
-# def create_item(item: Drug) -> Drug:
-#     if item.name in STORE:
-#         raise HTTPException(status_code=403, detail="Item already exists")
-#     STORE[item.name] = item
-#     return item
-
-# @app.get("/item/{gtin}", description="Return item")
-# def get_item(name: str) -> Drug:
-#     if name not in STORE:
-#         raise HTTPException(status_code=404, detail="Item not found")
-#     return STORE[name]
-
-# @app.delete("/item/{name}", description="Delete item")
-# def delete_item(name: str) -> Drug:
-#     if name not in STORE:
-#         raise HTTPException(status_code=404, detail="Item not found")
-#     return STORE.pop(name)
-
-
-
-@app.get("/interactions_multiple_sources")
-def get_interactions_multiple_sources(
-    gtins: str = Query(description="drug GTINs, separated by commas", example="7680612850014,7680612850090"),
+@app.get("/interactions_multiple_gtins", response_model=List[Interaction])
+def get_interactions_multiple_gtins(
+    gtins: str = Query(description="drug GTINs, separated by commas", example="7680612850014,7680531140760"),
     language: Language = Query(default=Language.FR)
-) -> list[list[Interaction]]:
+) -> List[Drug]:
     gtin_list = gtins.split(',')
-    all_interactions = []
+    all_drugs = []
+
+    interaction_count: Dict[str, int] = defaultdict(int)
+    interaction_map: Dict[str, Interaction] = {}
 
     for gtin in gtin_list:
         response = requests.get(
@@ -85,22 +63,31 @@ def get_interactions_multiple_sources(
         response.raise_for_status()
         data = response.json()
 
-        # print(data["components"][0]["substances"][0]["substance"])
-
         interactions = [
             get_interaction(drugInteraction)
             for drugInteraction in data["components"][0]["substances"][0]["drugInteractions"]
         ]
-        all_interactions.append(interactions)
 
-    return all_interactions
+        for interaction in interactions:
+            interaction_count[interaction.id] += 1
+            interaction_map[interaction.id] = interaction
+
+    repeated_interactions = [
+        interaction for interaction_id, count in interaction_count.items() if count > 1
+        for interaction in [interaction_map[interaction_id]]
+    ]
+
+    if not repeated_interactions:
+        return [Interaction(id="0", name="No interaction found", mechanism="")]
+
+    return repeated_interactions
 
 
-@app.get("/interactions_single_source")
-def get_interactions_single_source(
+@app.get("/data_single_gtin", response_model=Drug)
+def get_data_single_gtin(
     gtin: str = Query(description="drug GTIN", example="7680612850014"),
     language: Language = Query(default=Language.FR)
-) -> list[Interaction]:
+) -> Drug:
     response = requests.get(
         f"https://documedis.hcisolutions.ch/2020-01/api/products/{gtin}?IdType=gtin",
         headers={"Accept-Language" : language.value}
@@ -108,13 +95,19 @@ def get_interactions_single_source(
     response.raise_for_status()
     data = response.json()
 
-    # print(data["components"][0]["substances"][0]["substance"])
-
-    return [
+    interactions = [
         get_interaction(drugInteraction)
         for drugInteraction in data["components"][0]["substances"][0]["drugInteractions"]
-        #for drugInteraction in substance["drugInteractions"]
     ]
+
+    drug = Drug(
+        gtin=gtin,
+        #name=data["name"],
+        description=data["description"]["description"],
+        interactions=interactions
+    )
+
+    return drug
 
 
 def get_interaction(drugInteraction) -> Interaction:
