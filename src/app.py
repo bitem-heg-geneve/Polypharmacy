@@ -21,6 +21,32 @@ class Language(Enum):
     FR = "fr-CH"
     DE = "de-CH"
 
+# Define model for BioC annotation level
+class BioC_annotation(BaseModel):
+    id: str
+    infon: str | None = None
+    location: str
+    text: str
+
+# Define model for BioC passage level
+class BioC_passage(BaseModel):
+    infon: str | None = None
+    offset: str
+    text: str
+    annotations: list[BioC_annotation]
+
+# Define model for BioC document level
+class BioC_document(BaseModel):
+    id: str
+    passage: list[BioC_passage]
+
+# Define model for BioC collection level
+class BioC_collection(BaseModel):
+    source: str
+    date: str
+    key: str
+    documents: list[BioC_document]
+
 # Define model for drug interaction
 class Interaction(BaseModel):
     id: str
@@ -39,14 +65,14 @@ STORE: dict[Drug] = {}
 
 
 # Endpoint to get interactions for multiple GTINs
-@app.get("/interactions_multiple_gtins", response_model=List[Interaction])
+@app.get("/interactions_multiple_gtins")
 def get_interactions_multiple_gtins(
     gtins: str = Query(description="drug GTINs, separated by commas", example="7680612850014,7680531140760"),
     language: Language = Query(default=Language.FR)
-) -> List[Drug]:
+) -> Dict[str, List]:
     # Split GTINs into list
     gtin_list = gtins.split(',')
-    all_drugs = []
+    original_documents = []
 
     # Count interactions and create interaction map
     interaction_count: Dict[str, int] = defaultdict(int)
@@ -56,10 +82,11 @@ def get_interactions_multiple_gtins(
     for gtin in gtin_list:
         response = requests.get(
             f"https://documedis.hcisolutions.ch/2020-01/api/products/{gtin}?IdType=gtin",
-            headers={"Accept-Language" : language.value}
+            headers={"Accept-Language": language.value}
         )
         response.raise_for_status()
         data = response.json()
+        original_documents.append(data)
 
         # Extract drug interactions from response
         interactions = [
@@ -80,9 +107,41 @@ def get_interactions_multiple_gtins(
 
     # If no repeated interactions found, return a default interaction
     if not repeated_interactions:
-        return [Interaction(id="0", name="No interaction found", mechanism="")]
+        repeated_interactions = [Interaction(id="0", name="No interaction found", mechanism="")]
 
-    return repeated_interactions
+    return {
+        "detected_interactions": repeated_interactions,
+        "original_documents": original_documents
+    }
+
+
+# Endpoint to get annotations of the compendium notices in BioC format
+
+@app.get("/BioC_annotations")
+def get_BioC_annotations(
+    gtins: str = Query(description="drug GTINs, separated by commas", example="7680612850014,7680531140760"),
+    language: Language = Query(default=Language.FR)
+) -> Dict[str, List]:
+    # Split GTINs into list
+    gtin_list = gtins.split(',')
+    original_documents = []
+
+    # Fetch data from compendium for each GTIN
+    for gtin in gtin_list:
+        response = requests.get(
+            f"https://documedis.hcisolutions.ch/2020-01/api/products/{gtin}?IdType=gtin",
+            headers={"Accept-Language": language.value}
+        )
+        response.raise_for_status()
+        data = response.json()
+        original_documents.append(data)
+    
+    annotated_documents = original_documents
+
+    return {
+        "annotated_documents": annotated_documents,
+        "original_documents": original_documents
+    }
 
 
 # Endpoint to get data for a single GTIN
