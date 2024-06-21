@@ -1,9 +1,11 @@
-import requests
+import requests, json
+import annotations.matcher, annotations.metrics
 from typing import List, Dict
 from fastapi import FastAPI, Query, Request
 from pydantic import BaseModel
 from enum import Enum
 from collections import defaultdict
+from datetime import datetime
 
 
 # Initialize FastAPI app
@@ -30,7 +32,7 @@ class BioC_annotation(BaseModel):
 
 # Define model for BioC passage level
 class BioC_passage(BaseModel):
-    infon: str | None = None
+    #infon: str | None = None
     offset: str
     text: str
     annotations: list[BioC_annotation]
@@ -38,13 +40,15 @@ class BioC_passage(BaseModel):
 # Define model for BioC document level
 class BioC_document(BaseModel):
     id: str
+    infon: str | None = None
     passage: list[BioC_passage]
 
 # Define model for BioC collection level
 class BioC_collection(BaseModel):
-    source: str
-    date: str
-    key: str
+    source: str | None = "Compendium.ch"
+    date: str | None = datetime.today().strftime("%Y%m%d")
+    key: str | None = None
+    infon: str | None = None
     documents: list[BioC_document]
 
 # Define model for drug interaction
@@ -67,7 +71,7 @@ STORE: dict[Drug] = {}
 # Endpoint to get interactions for multiple GTINs
 @app.get("/interactions_multiple_gtins")
 def get_interactions_multiple_gtins(
-    gtins: str = Query(description="drug GTINs, separated by commas", example="7680612850014,7680531140760"),
+    gtins: str = Query(description="Two drug GTINs, separated by commas", example="7680612850014,7680531140760"),
     language: Language = Query(default=Language.FR)
 ) -> Dict[str, List]:
     # Split GTINs into list
@@ -117,37 +121,46 @@ def get_interactions_multiple_gtins(
 
 # Endpoint to get annotations of the compendium notices in BioC format
 
-@app.get("/BioC_annotations")
+@app.get("/BioC_annotations", response_model=BioC_collection)
 def get_BioC_annotations(
-    gtins: str = Query(description="drug GTINs, separated by commas", example="7680612850014,7680531140760"),
+    gtin: str = Query(description="Single drug GTIN", example="7680612850014"),
     language: Language = Query(default=Language.FR)
-) -> Dict[str, List]:
-    # Split GTINs into list
-    gtin_list = gtins.split(',')
+) -> BioC_collection:
     original_documents = []
+    # Load ontologies for NER
+    stopwatch = annotations.metrics.StopWatch()
+    matcher = annotations.matcher.load_matcher('../ontologies')
+
+    # Test the matcher
+    #for result in matcher.match("gre hrh htrdhdfk ge rh thtr carcinoma blabla breast cancer tototets", stopwatch):
+    #    print(result)
 
     # Fetch data from compendium for each GTIN
-    for gtin in gtin_list:
-        response = requests.get(
-            f"https://documedis.hcisolutions.ch/2020-01/api/products/{gtin}?IdType=gtin",
-            headers={"Accept-Language": language.value}
-        )
-        response.raise_for_status()
-        data = response.json()
-        original_documents.append(data)
-    
+
+    response = requests.get(
+        f"https://documedis.hcisolutions.ch/2020-01/api/products/{gtin}?IdType=gtin",
+        headers={"Accept-Language": language.value}
+    )
+    response.raise_for_status()
+    data = response.json()
+    original_documents=data
     annotated_documents = original_documents
 
-    return {
-        "annotated_documents": annotated_documents,
-        "original_documents": original_documents
-    }
+    # Create drug object to be returned
+    res = BioC_collection(
+        documents=BioC_document(
+            id=gtin,
+            infon=json.dumps(original_documents)
+        )
+    )
+
+    return res
 
 
 # Endpoint to get data for a single GTIN
 @app.get("/data_single_gtin", response_model=Drug)
 def get_data_single_gtin(
-    gtin: str = Query(description="drug GTIN", example="7680612850014"),
+    gtin: str = Query(description="Single drug GTIN", example="7680612850014"),
     language: Language = Query(default=Language.FR)
 ) -> Drug:
     # Fetch data for the given GTIN
@@ -165,16 +178,20 @@ def get_data_single_gtin(
     ]
 
     # Create drug object to be returned
-    drug = Drug(
+    res = Drug(
         gtin=gtin,
         #name=data["name"],
         description=data["description"]["description"],
         interactions=interactions
     )
 
-    return drug
+    return res
 
 
 # Function to create Interaction object
 def get_interaction(drugInteraction) -> Interaction:
-    return Interaction(id=drugInteraction["id"], name=drugInteraction["title"], mechanism=drugInteraction["mechanismText"]) 
+    return Interaction(
+        id=drugInteraction["id"],
+        name=drugInteraction["title"],
+        mechanism=drugInteraction["mechanismText"]
+    ) 
