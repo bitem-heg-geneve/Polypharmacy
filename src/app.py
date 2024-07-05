@@ -24,7 +24,7 @@ class Language(Enum):
     DE = "de-CH"
 
 # Define model for BioC location item
-class Location(BaseModel):
+class BioC_location(BaseModel):
     offset: int
     length: int
 
@@ -32,7 +32,7 @@ class Location(BaseModel):
 class BioC_annotation(BaseModel):
     #id: str | None = None
     infon: str | None = None
-    location: Location | None = None
+    location: BioC_location | None = None
     text: str
 
 # Define model for BioC passage level
@@ -215,7 +215,7 @@ def get_annotations(text,stopwatch,matcher) -> List[BioC_annotation]:
     res = []
 
     for result in matcher.match(text, stopwatch):
-        location = Location(offset=result.start_index, length=result.end_index - result.start_index)
+        location = BioC_location(offset=result.start_index, length=result.end_index - result.start_index)
         annotation = BioC_annotation(
             infon="type="+result.obj_term.type+", id="+result.obj_term.concept_id,
             location=location,
