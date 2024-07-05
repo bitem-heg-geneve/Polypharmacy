@@ -23,18 +23,23 @@ class Language(Enum):
     FR = "fr-CH"
     DE = "de-CH"
 
+# Define model for BioC location item
+class Location(BaseModel):
+    offset: int
+    length: int
+
 # Define model for BioC annotation level
 class BioC_annotation(BaseModel):
-    id: str
+    #id: str | None = None
     infon: str | None = None
-    location: str
+    location: Location | None = None
     text: str
 
 # Define model for BioC passage level
 class BioC_passage(BaseModel):
-    #infon: str | None = None
-    offset: str
-    text: str
+    infon: str | None = None
+    offset: int
+    text: str | None = None
     annotations: list[BioC_annotation]
 
 # Define model for BioC document level
@@ -95,7 +100,8 @@ def get_interactions_multiple_gtins(
         # Extract drug interactions from response
         interactions = [
             get_interaction(drugInteraction)
-            for drugInteraction in data["components"][0]["substances"][0]["drugInteractions"]
+            for substance in data["components"][0]["substances"]
+            for drugInteraction in substance.get("drugInteractions", [])
         ]
 
         # Update interaction count and map
@@ -120,38 +126,46 @@ def get_interactions_multiple_gtins(
 
 
 # Endpoint to get annotations of the compendium notices in BioC format
-
 @app.get("/BioC_annotations", response_model=BioC_collection)
 def get_BioC_annotations(
-    gtin: str = Query(description="Single drug GTIN", example="7680612850014"),
+    gtin: str = Query(description="Single drug GTIN", example="7680336700282"),
     language: Language = Query(default=Language.FR)
 ) -> BioC_collection:
-    original_documents = []
-    # Load ontologies for NER
-    stopwatch = annotations.metrics.StopWatch()
-    matcher = annotations.matcher.load_matcher('../ontologies')
-
-    # Test the matcher
-    #for result in matcher.match("gre hrh htrdhdfk ge rh thtr carcinoma blabla breast cancer tototets", stopwatch):
-    #    print(result)
+    passages = []
 
     # Fetch data from compendium for each GTIN
-
     response = requests.get(
         f"https://documedis.hcisolutions.ch/2020-01/api/products/{gtin}?IdType=gtin",
         headers={"Accept-Language": language.value}
     )
     response.raise_for_status()
     data = response.json()
-    original_documents=data
-    annotated_documents = original_documents
 
-    # Create drug object to be returned
+    # Load ontologies for NER, only once
+    stopwatch = annotations.metrics.StopWatch()
+    matcher = annotations.matcher.load_matcher('../ontologies')
+
+    # At the moment, we'll consider only the objects drugInteractions as passage to annotate
+    for substance in data["components"][0]["substances"]:
+        for drugInteraction in substance.get("drugInteractions", []):
+            text = json.dumps(drugInteraction,ensure_ascii=False)
+            ann = get_annotations(text,stopwatch,matcher)
+
+            passage = BioC_passage(
+                offset=0,
+                text=text,
+                annotations=ann
+            )
+            passages.append(passage)
+
+    documents=BioC_document(
+        id=gtin,
+        infon=json.dumps(data,ensure_ascii=False),
+        passage=passages
+    )
+
     res = BioC_collection(
-        documents=BioC_document(
-            id=gtin,
-            infon=json.dumps(original_documents)
-        )
+        documents=[documents]
     )
 
     return res
@@ -160,7 +174,7 @@ def get_BioC_annotations(
 # Endpoint to get data for a single GTIN
 @app.get("/data_single_gtin", response_model=Drug)
 def get_data_single_gtin(
-    gtin: str = Query(description="Single drug GTIN", example="7680612850014"),
+    gtin: str = Query(description="Single drug GTIN", example="7680336700282"),
     language: Language = Query(default=Language.FR)
 ) -> Drug:
     # Fetch data for the given GTIN
@@ -174,13 +188,13 @@ def get_data_single_gtin(
     # Extract drug interactions from response
     interactions = [
         get_interaction(drugInteraction)
-        for drugInteraction in data["components"][0]["substances"][0]["drugInteractions"]
+        for substance in data["components"][0]["substances"]
+        for drugInteraction in substance.get("drugInteractions", [])
     ]
 
     # Create drug object to be returned
     res = Drug(
         gtin=gtin,
-        #name=data["name"],
         description=data["description"]["description"],
         interactions=interactions
     )
@@ -195,3 +209,18 @@ def get_interaction(drugInteraction) -> Interaction:
         name=drugInteraction["title"],
         mechanism=drugInteraction["mechanismText"]
     ) 
+
+# Function to create annotation object
+def get_annotations(text,stopwatch,matcher) -> List[BioC_annotation]:
+    res = []
+
+    for result in matcher.match(text, stopwatch):
+        location = Location(offset=result.start_index, length=result.end_index - result.start_index)
+        annotation = BioC_annotation(
+            infon="type="+result.obj_term.type+", id="+result.obj_term.concept_id,
+            location=location,
+            text=result.term_ini
+        )
+        res.append(annotation)
+
+    return res
