@@ -217,7 +217,7 @@ def get_annotations(text,stopwatch,matcher) -> List[BioC_annotation]:
     for result in matcher.match(text, stopwatch):
         location = BioC_location(offset=result.start_index, length=result.end_index - result.start_index)
         annotation = BioC_annotation(
-            infon="type="+result.obj_term.type+", id="+result.obj_term.concept_id,
+            infon="type="+result.obj_term.type+", id="+result.obj_term.concept_id+", preferred_term="+result.obj_term.pref_term+", provenance="+result.obj_term.provenance,
             location=location,
             text=result.term_ini
         )
