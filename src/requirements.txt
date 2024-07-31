@@ -1,4 +1,5 @@
 fastapi
 requests
 uvicorn[standard]
+pydantic
 git+ssh://git@github.com/sibils/annotations.git@prod
