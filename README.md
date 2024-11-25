@@ -9,4 +9,4 @@ DEV deployment in a virtualenv:
 3) python -m venv venv
 4) .\.venv\Scripts\activate
 5) pip install -r .\src\requirements.txt
-6) fastapi dev sources\app.py
+6) fastapi dev src\app.py
